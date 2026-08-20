@@ -1,6 +1,6 @@
-# Football Fútbol ⚽🏈
+# Football Fútbol 🏈⚽
 
-A silly little arcade soccer game — but the ball is an American football, so it **wobbles, curves, and never rolls quite straight**. Run your player into the ball to shove it toward the goal. Play the AI, a friend, or a chaotic 2v2.
+A silly little arcade fútbol game, but the ball is an American football, so it **wobbles, curves, and never rolls quite straight**. Run your player into the ball to shove it toward the goal. Play the AI, a friend, or a chaotic 2v2.
 
 **Play it:** [ff.notsteve.com](https://ff.notsteve.com)
 
