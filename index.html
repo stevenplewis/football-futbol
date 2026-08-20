@@ -35,7 +35,7 @@
 </div>
 <canvas id="c" width="900" height="560"></canvas>
 <div class="keys">
-  BLUE <span>WASD</span> boost <span>L-Shift</span> &nbsp;·&nbsp; RED(2p) <span>↑←↓→</span> boost <span>R-Shift</span><br>
+  HOME <span>WASD</span> boost <span>L-Shift</span> &nbsp;·&nbsp; AWAY(2p) <span>↑←↓→</span> boost <span>R-Shift</span><br>
   <span>ESC</span> pause &nbsp; <span>C</span> colors &nbsp; <span>M</span> mute
 </div>
 <div id="msg"></div>
@@ -72,7 +72,7 @@ const goalY0 = (H - GOAL_H) / 2, goalY1 = (H + GOAL_H) / 2;
 const goalMidY = H/2;
 
 // ---- config ----
-let teamSize = 1, numHumans = 1;   // team size (1v1/2v2) and how many players are human (rest AI)
+let teamSize = 1, numHumans = 1, humanSplit = false;   // team size, human count, and (2v2/2H) same-team vs opposing
 let muted = false;
 let started = false;   // title screen until a real gesture (also unlocks audio)
 let paused = false, startBtnPrev = false;
@@ -139,6 +139,8 @@ addEventListener('pointerdown', e=>{
   else if(hit(L.teamTwo)){ teamSize=2; }
   else if(hit(L.humMinus)){ numHumans=Math.max(1,numHumans-1); }
   else if(hit(L.humPlus)){ numHumans=Math.min(teamSize*2,numHumans+1); }
+  else if(L.showTeams && hit(L.sameTab)){ humanSplit=false; }
+  else if(L.showTeams && hit(L.splitTab)){ humanSplit=true; }
   else if(hit(L.start)){ started=true; startMatch(); }
 });
 function togglePause(){ if(paused){ paused=false; countdownMs=COUNTDOWN_MS; goMs=0; } else { paused=true; } }   // 3-2-1 on resume
@@ -247,10 +249,11 @@ const CTRL_RED ={up:'arrowup',down:'arrowdown',left:'arrowleft',right:'arrowrigh
 function buildTeams(){
   players = [];
   const B=teamCol('blue'), R=teamCol('red');
-  // slots: HOME team first, then AWAY (humans fill from the front -> co-op friendly)
+  // slot order determines which team humans fill first
   const slots=[];
-  for(let i=0;i<teamSize;i++) slots.push('blue');
-  for(let i=0;i<teamSize;i++) slots.push('red');
+  if(humanSplit && teamSize===2){ for(let i=0;i<teamSize;i++){ slots.push('blue'); slots.push('red'); } }  // interleave -> humans split across teams
+  else { for(let i=0;i<teamSize;i++) slots.push('blue'); for(let i=0;i<teamSize;i++) slots.push('red'); }  // HOME first -> co-op
+
   let humanIdx=0, blueKb=false, redKb=false;
   for(const team of slots){
     const isHuman = humanIdx<numHumans;
@@ -560,7 +563,11 @@ function homeLayout(){
     humMinus:{x:cx-boxW/2-btn-6, y:cy+68, w:btn, h:btn},
     humBox:  {x:cx-boxW/2,       y:cy+68, w:boxW, h:btn},
     humPlus: {x:cx+boxW/2+6,     y:cy+68, w:btn, h:btn},
-    start:   {x:cx-100, y:cy+124, w:200, h:46},
+    // team toggle (only shown for 2v2 with exactly 2 humans)
+    showTeams: (teamSize===2 && numHumans===2),
+    sameTab: {x:cx-tabW-g/2, y:cy+120, w:tabW, h:32},
+    splitTab:{x:cx+g/2,      y:cy+120, w:tabW, h:32},
+    start:   {x:cx-100, y:(teamSize===2 && numHumans===2)? cy+166 : cy+124, w:200, h:46},
   };
 }
 
@@ -694,6 +701,11 @@ function draw(){
     tab(L.teamOne,'1v1', teamSize===1); tab(L.teamTwo,'2v2', teamSize===2);
     lbl('HUMAN PLAYERS  (rest AI)', L.humBox.y-13);
     step(L.humMinus,'–'); step(L.humPlus,'+'); val(L.humBox, numHumans);
+    // 2-human team toggle (co-op vs versus), only for 2v2 with 2 humans
+    if(L.showTeams){
+      lbl('THE 2 HUMANS', L.sameTab.y-8);
+      tab(L.sameTab,'SAME TEAM', !humanSplit); tab(L.splitTab,'OPPOSING', humanSplit);
+    }
     // START
     ctx.fillStyle='#ffd36b'; ctx.fillRect(L.start.x,L.start.y,L.start.w,L.start.h);
     ctx.fillStyle='#0b1020'; ctx.font='bold 22px ui-monospace,monospace'; ctx.fillText('START', W/2, L.start.y+L.start.h/2+1);
