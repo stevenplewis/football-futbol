@@ -66,6 +66,37 @@ const noiseTile = document.createElement('canvas'); noiseTile.width=noiseTile.he
 })();
 let noisePattern=null;
 
+// dirt-wear layer: players grind grass down to dirt where they run (fades back slowly)
+const wear=document.createElement('canvas'); wear.width=900; wear.height=560;
+const wctx=wear.getContext('2d');
+// static scattered decor for texture: grass tufts, flowers, rocks
+const tufts=[], flowers=[], rocks=[];
+(()=>{
+  for(let i=0;i<95;i++) tufts.push({x:16+Math.random()*(900-32), y:8+Math.random()*(560-16), light:Math.random()<0.5, s:0.7+Math.random()*0.7});
+  const petals=['#ff6fae','#ffe14d','#ffffff','#c58cff','#ff8c2b'];
+  for(let i=0;i<15;i++) flowers.push({x:30+Math.random()*(900-60), y:30+Math.random()*(560-60), c:petals[(Math.random()*petals.length)|0], s:0.75+Math.random()*0.6});
+  for(let i=0;i<9;i++) rocks.push({x:30+Math.random()*(900-60), y:30+Math.random()*(560-60), s:0.7+Math.random()*0.8});
+})();
+// CRT scanline tile (1px dark line every 3px)
+const scanTile=document.createElement('canvas'); scanTile.width=1; scanTile.height=3;
+{ const s=scanTile.getContext('2d'); s.fillStyle='rgba(0,0,0,0.15)'; s.fillRect(0,2,1,1); }
+let scanPattern=null;
+
+// pixelation + color-quantization buffer (retro 8/16-bit look)
+let PIXEL=true;
+const PW=460, PH=Math.round(PW*560/900);   // low-res buffer (keeps field aspect)
+const pb=document.createElement('canvas'); pb.width=PW; pb.height=PH;
+const pbx=pb.getContext('2d');
+// fixed retro palette (Endesga 32) + a lookup table for fast nearest-color mapping
+const PALETTE=['be4a2f','d77643','ead4aa','e4a672','b86f50','733e39','3e2731','a22633','e43b44','f77622','feae34','fee761','63c74d','3e8948','265c42','193c3e','124e89','0099db','2ce8f5','ffffff','c0cbdc','8b9bb4','5a6988','3a4466','262b44','181425','ff0044','68386c','b55088','f6757a','e8b796','c28569']
+  .map(h=>[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]);
+const PLUT=new Uint8Array(32768*3);   // index by 5-bit RGB -> nearest palette color
+(()=>{ for(let r=0;r<32;r++)for(let g=0;g<32;g++)for(let b=0;b<32;b++){
+  const R=r<<3,G=g<<3,B=b<<3; let best=0,bd=1e9;
+  for(let p=0;p<PALETTE.length;p++){ const c=PALETTE[p], dr=R-c[0],dg=G-c[1],db=B-c[2], dd=dr*dr+dg*dg+db*db; if(dd<bd){bd=dd;best=p;} }
+  const o=(r*1024+g*32+b)*3, c=PALETTE[best]; PLUT[o]=c[0];PLUT[o+1]=c[1];PLUT[o+2]=c[2];
+} })();
+
 // ---- goals ----
 const GOAL_H = 200;
 const goalY0 = (H - GOAL_H) / 2, goalY1 = (H + GOAL_H) / 2;
@@ -113,6 +144,7 @@ addEventListener('keydown', e => {
   if (k === 'escape' || k === 'p') { if(started && !matchOver) togglePause(); }
   if (k === 'c') { palIdx=(palIdx+1)%PALETTES.length; applyPalette(); flashMsg('Colors: '+PALETTES[palIdx].name); }
   if (k === 'm') muted = !muted;
+  if (k === 'x') PIXEL = !PIXEL;   // toggle pixelation (dev)
   ensureAudio();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; codes[e.code] = false; });
@@ -240,7 +272,7 @@ function P(team, color, ai, ctrl, pad){
   return { team, color, ai:!!ai, ctrl:ctrl||null, pad:(pad==null?null:pad),
            x:0, y:0, vx:0, vy:0, r:20, fx:team==='blue'?1:-1, fy:0,
            energy:100, boostTimer:0, boostPrev:false, run:0, step:0,
-           face: team==='blue'?0:Math.PI,
+           face: team==='blue'?0:Math.PI, breathOff: Math.random()*6.28,
            errx:0, erry:0, errT:0 };
 }
 const CTRL_BLUE={up:'w',down:'s',left:'a',right:'d',boostCode:'ShiftLeft'};
@@ -502,6 +534,7 @@ function startMatch(){
   score=[0,0]; matchOver=false; winner=null; golden=false; freeze=0;
   timeScale=1; goalMs=0; scored=false; pendingWin=null;
   clock = fmtType==='timed' ? timedMins*60*60 : 0;   // minutes * 60s * 60fps (sim steps)
+  wctx.clearRect(0,0,900,560);                        // fresh field each match
   setScoreHUD(); buildTeams();
 }
 function endMatch(who){ matchOver=true; winner=who; msg.style.opacity=0; shake=Math.max(shake,26); }
@@ -527,17 +560,48 @@ function goal(who){
 }
 
 // ---- render ----
-// diamond net inside a goal pocket [x0..x1] x [goalY0..goalY1]
+// bold grid net inside a goal pocket [x0..x1] x [goalY0..goalY1]
 function drawNet(x0,x1){
   ctx.save();
   ctx.beginPath(); ctx.rect(x0, goalY0, x1-x0, GOAL_H); ctx.clip();
-  ctx.strokeStyle='rgba(255,255,255,.13)'; ctx.lineWidth=1;
-  const s=11;
-  for(let d=-GOAL_H; d<(x1-x0)+GOAL_H; d+=s){
-    ctx.beginPath(); ctx.moveTo(x0+d, goalY0); ctx.lineTo(x0+d+GOAL_H, goalY1); ctx.stroke();       // "/"
-    ctx.beginPath(); ctx.moveTo(x0+d, goalY0); ctx.lineTo(x0+d-GOAL_H, goalY1); ctx.stroke();       // "\"
-  }
+  ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=2.5;
+  const s=16;
+  for(let x=x0; x<=x1+1; x+=s){ ctx.beginPath(); ctx.moveTo(x, goalY0); ctx.lineTo(x, goalY1); ctx.stroke(); }
+  for(let y=goalY0; y<=goalY1+1; y+=s){ ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); }
   ctx.restore();
+}
+
+// scattered ground decor (static): grass tufts, rocks, flowers
+function drawTufts(){
+  // grass blades
+  ctx.lineCap='round';
+  for(const g of tufts){
+    ctx.strokeStyle = g.light ? 'rgba(210,255,200,.20)' : 'rgba(0,40,10,.30)';
+    ctx.lineWidth = 2.2*g.s;
+    const x=g.x, y=g.y, h=6*g.s;
+    ctx.beginPath();
+    ctx.moveTo(x-3*g.s, y); ctx.lineTo(x-1.5*g.s, y-h);
+    ctx.moveTo(x,       y); ctx.lineTo(x,          y-h*1.25);
+    ctx.moveTo(x+3*g.s, y); ctx.lineTo(x+1.5*g.s, y-h);
+    ctx.stroke();
+  }
+  ctx.lineCap='butt';
+  // rocks (hard shadow + gray body + highlight)
+  for(const k of rocks){
+    const r=7*k.s;
+    ctx.fillStyle='rgba(0,20,6,.3)'; ctx.beginPath(); ctx.ellipse(k.x+2, k.y+3, r, r*0.7, 0,0,7); ctx.fill();
+    ctx.fillStyle='#8b909a'; ctx.beginPath(); ctx.ellipse(k.x, k.y, r, r*0.72, 0,0,7); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.25)'; ctx.beginPath(); ctx.ellipse(k.x-r*0.3, k.y-r*0.25, r*0.4, r*0.28, 0,0,7); ctx.fill();
+  }
+  // flowers (stem + petals + center)
+  for(const f of flowers){
+    const s=f.s, x=f.x, y=f.y;
+    ctx.strokeStyle='rgba(20,80,30,.5)'; ctx.lineWidth=1.5*s;
+    ctx.beginPath(); ctx.moveTo(x, y+5*s); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillStyle=f.c;
+    for(let a=0;a<5;a++){ const ang=a/5*Math.PI*2; ctx.beginPath(); ctx.arc(x+Math.cos(ang)*3*s, y+Math.sin(ang)*3*s, 2.2*s, 0,7); ctx.fill(); }
+    ctx.fillStyle='#3a2a10'; ctx.beginPath(); ctx.arc(x, y, 1.8*s, 0,7); ctx.fill();
+  }
 }
 
 // pause menu layout (logical coords)
@@ -573,8 +637,9 @@ function homeLayout(){
 
 // a little top-down player: round body, face turned to travel dir, feet that pump when moving
 function drawPlayer(p){
-  const ang=p.face, col=teamCol(p.team), detail=ink(col);   // eyes/hair flip to stay visible on dark bodies
-  ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(ang);
+  const ang=p.face, col=teamCol(p.team), detail=ink(col);   // hair flips to stay visible on dark bodies
+  const breath = 1 + Math.sin(simStep*0.06 + p.breathOff)*0.04;   // gentle idle breathing
+  ctx.save(); ctx.translate(p.x,p.y); ctx.scale(breath,breath); ctx.rotate(ang);
   // body
   ctx.beginPath(); ctx.arc(0,0,p.r,0,7); ctx.fillStyle=col; ctx.fill();
   ctx.lineWidth=3; ctx.strokeStyle=p.ai?'rgba(255,255,255,.35)':'rgba(255,255,255,.85)'; ctx.stroke();
@@ -584,10 +649,13 @@ function drawPlayer(p){
     if(p.num===1){ for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.arc(-p.r+3, i*8, 5.5, 0, 7); ctx.fill(); } }   // curly
     else { ctx.beginPath(); for(let i=-1;i<=1;i++){ const yy=i*8; ctx.moveTo(-p.r+4, yy-5); ctx.lineTo(-p.r-12, yy); ctx.lineTo(-p.r+4, yy+5); } ctx.closePath(); ctx.fill(); }  // spikes
   }
-  // eyes toward the facing direction
-  ctx.fillStyle=detail;
-  ctx.beginPath(); ctx.arc(p.r*0.5, -p.r*0.3, 2.8,0,7); ctx.fill();
-  ctx.beginPath(); ctx.arc(p.r*0.5,  p.r*0.3, 2.8,0,7); ctx.fill();
+  // big googly eyes — pupils track the ball
+  const toBall = Math.atan2(ball.y-p.y, ball.x-p.x) - ang;   // ball dir in local frame
+  const px=Math.cos(toBall)*2.2, py=Math.sin(toBall)*2.2;
+  for(const ey of [-p.r*0.32, p.r*0.32]){
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(p.r*0.44, ey, 5, 0,7); ctx.fill();
+    ctx.fillStyle='#0b1020'; ctx.beginPath(); ctx.arc(p.r*0.44+px, ey+py, 2.4, 0,7); ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -598,11 +666,13 @@ function draw(){
   ctx.clearRect(-40,-40,W+80,H+80);
   // field base + mow stripes + grass noise
   ctx.fillStyle='#1f6b39'; ctx.fillRect(-40,-40,W+80,H+80);
-  ctx.fillStyle='rgba(255,255,255,.014)';
+  ctx.fillStyle='rgba(255,255,255,.03)';                       // mow stripes (amped for pixelation)
   for(let i=0;i<8;i+=2) ctx.fillRect(i*W/8,0,W/8,H);
   if(!noisePattern) noisePattern=ctx.createPattern(noiseTile,'repeat');
-  ctx.globalAlpha=0.68; ctx.fillStyle=noisePattern; ctx.fillRect(-40,-40,W+80,H+80); ctx.globalAlpha=1;
-  ctx.strokeStyle='rgba(255,255,255,.15)'; ctx.lineWidth=2;
+  ctx.globalAlpha=0.85; ctx.fillStyle=noisePattern; ctx.fillRect(-40,-40,W+80,H+80); ctx.globalAlpha=1;
+  drawTufts();                          // scattered grass blades
+  ctx.drawImage(wear,0,0,W,H);          // worn-in dirt trails
+  ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=3;    // center line + circle (bolder)
   ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke();
   ctx.beginPath(); ctx.arc(W/2,H/2,70,0,7); ctx.stroke();
 
@@ -610,8 +680,8 @@ function draw(){
   ctx.fillStyle='rgba(0,0,0,.38)';
   ctx.fillRect(0,0,GD,goalY0);   ctx.fillRect(0,goalY1,GD,H-goalY1);
   ctx.fillRect(W-GD,0,GD,goalY0); ctx.fillRect(W-GD,goalY1,GD,H-goalY1);
-  // goal pockets, tinted to each team's color
-  ctx.globalAlpha=0.16;
+  // goal pockets, boldly tinted to each team's color
+  ctx.globalAlpha=0.4;
   ctx.fillStyle=teamCol('blue'); ctx.fillRect(0,goalY0,GD,GOAL_H);
   ctx.fillStyle=teamCol('red');  ctx.fillRect(W-GD,goalY0,GD,GOAL_H);
   ctx.globalAlpha=1;
@@ -631,13 +701,15 @@ function draw(){
 
   for(const p of players){
     if(p.run>0.5){ ctx.globalAlpha=0.18; ctx.beginPath(); ctx.arc(p.x-p.vx*1.4,p.y-p.vy*1.4,p.r*0.85,0,7); ctx.fillStyle=teamCol(p.team); ctx.fill(); ctx.globalAlpha=1; }  // sprint ghost
+    // hard offset drop-shadow (sticker look)
+    ctx.beginPath(); ctx.ellipse(p.x+4, p.y+6, p.r, p.r*0.92, 0,0,7); ctx.fillStyle='rgba(0,20,6,.35)'; ctx.fill();
     if(p.boostTimer>0){ ctx.beginPath(); ctx.arc(p.x,p.y,p.r+7,0,7); ctx.fillStyle='rgba(255,255,255,.18)'; ctx.fill(); }
     drawPlayer(p);
     // boost meter: ring around the player, fills clockwise from the top
-    const rr=p.r+5, frac=p.energy/100;
-    ctx.lineWidth=3; ctx.lineCap='round';
-    ctx.strokeStyle='rgba(255,255,255,.12)'; ctx.beginPath(); ctx.arc(p.x,p.y,rr,0,7); ctx.stroke();
-    ctx.strokeStyle = p.energy>=BOOST_COST ? teamCol(p.team) : 'rgba(255,255,255,.45)';
+    const rr=p.r+6, frac=p.energy/100;
+    ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.beginPath(); ctx.arc(p.x,p.y,rr,0,7); ctx.stroke();
+    ctx.strokeStyle = p.energy>=BOOST_COST ? teamCol(p.team) : 'rgba(255,255,255,.55)';
     ctx.beginPath(); ctx.arc(p.x,p.y,rr,-Math.PI/2, -Math.PI/2 + frac*Math.PI*2); ctx.stroke();
     ctx.lineCap='butt';
   }
@@ -670,6 +742,21 @@ function draw(){
   // particles
   for(const pt of particles){ ctx.globalAlpha=Math.max(0,pt.life); ctx.beginPath(); ctx.arc(pt.x,pt.y,3*pt.life+1,0,7); ctx.fillStyle=pt.color; ctx.fill(); }
   ctx.globalAlpha=1;
+
+  // --- pixelate the WORLD now; UI/text below is drawn crisp on top ---
+  ctx.setTransform(1,0,0,1,0,0);
+  if(PIXEL){
+    pbx.imageSmoothingEnabled=false;                 // nearest-neighbor downscale (crisp pixels)
+    pbx.clearRect(0,0,PW,PH);
+    pbx.drawImage(cv, 0,0, PW,PH);
+    const img=pbx.getImageData(0,0,PW,PH), d=img.data;
+    for(let i=0;i<d.length;i+=4){ const o=(((d[i]>>3)*1024)+((d[i+1]>>3)*32)+(d[i+2]>>3))*3; d[i]=PLUT[o]; d[i+1]=PLUT[o+1]; d[i+2]=PLUT[o+2]; }
+    pbx.putImageData(img,0,0);
+    ctx.imageSmoothingEnabled=false;
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.drawImage(pb, 0,0, cv.width, cv.height);
+  }
+  ctx.setTransform(SC,0,0,SC, 0,0);                   // UI in logical coords, crisp, no shake
 
   // match status: clock (timed) / target (first-to-N) / sudden death — top center
   ctx.textAlign='center'; ctx.font='bold 16px ui-monospace,monospace'; ctx.fillStyle='rgba(230,236,255,.85)';
@@ -752,8 +839,13 @@ function draw(){
   }
   ctx.textAlign='start';
 
-
   ctx.setTransform(1,0,0,1,0,0);
+  // CRT pass: scanlines + vignette (screen/device space)
+  if(!scanPattern) scanPattern=ctx.createPattern(scanTile,'repeat');
+  ctx.fillStyle=scanPattern; ctx.fillRect(0,0,cv.width,cv.height);
+  const vg=ctx.createRadialGradient(cv.width/2,cv.height/2, cv.height*0.36, cv.width/2,cv.height/2, cv.height*0.78);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.30)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,cv.width,cv.height);
 }
 
 // ---- loop ----
@@ -772,6 +864,13 @@ function update(){
   collidePlayers();
   moveBall();
   for(const p of players) collide(p);
+  // grind grass -> dirt where players run; whole layer erodes slowly so trails recover
+  wctx.globalCompositeOperation='source-over';
+  wctx.fillStyle='rgba(70,54,32,0.02)';
+  for(const p of players){ if(Math.hypot(p.vx,p.vy)>0.6){ wctx.beginPath(); wctx.ellipse(p.x,p.y,p.r*0.66,p.r*0.46,0,0,7); wctx.fill(); } }
+  if(ball.z<2 && Math.hypot(ball.vx,ball.vy)>1){ wctx.fillStyle='rgba(70,54,32,0.012)'; wctx.beginPath(); wctx.ellipse(ball.x,ball.y,ball.rb*0.6,ball.rb*0.45,0,0,7); wctx.fill(); }
+  wctx.globalCompositeOperation='destination-out'; wctx.fillStyle='rgba(0,0,0,0.003)'; wctx.fillRect(0,0,900,560);   // slow recovery -> wear lingers a while
+  wctx.globalCompositeOperation='source-over';
 }
 
 // fixed-timestep driver: run 60 sim steps/sec no matter the RAF rate (fixes high-refresh speed-up)
