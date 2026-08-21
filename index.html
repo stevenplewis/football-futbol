@@ -6,7 +6,7 @@
   :root { color-scheme: dark; }
   html, body {
     margin: 0; height: 100%;
-    background: #181f23;
+    background: #E0CCA8;
     color: #e6ecff;
     font-family: 'Quantico', ui-monospace, "SF Mono", Menlo, monospace;
     display: flex; flex-direction: column;
@@ -15,17 +15,17 @@
     user-select: none;
     -webkit-user-select: none;
   }
-  #hud { font-family: 'Jaro', ui-monospace, monospace; font-size: 30px; letter-spacing: 2px; opacity: .95; text-align: center; }
+  #hud { font-family: 'Jaro', ui-monospace, monospace; font-size: 30px; letter-spacing: 2px; text-align: center;
+    background: #141221; padding: 6px 24px; border-radius: 14px; }
   #hud b { color: #fff; }
   canvas {
     background: #181f23;
-    border-radius: 10px;
-    box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    border-radius: 20px;
     touch-action: none;
     display: block; max-width: 100%;
   }
-  .keys { font-size: 12px; opacity: .6; text-align:center; }
-  .keys span { color: #ffd36b; }
+  .keys { font-size: 12px; color: #4a3d28; text-align:center; }
+  .keys span { color: #1c140a; font-weight: 700; }
   #msg { position: fixed; font-size: 42px; font-weight: 700; text-shadow: 0 4px 20px #000; pointer-events:none; opacity:0; transition:opacity .2s; }
 </style>
 
@@ -161,7 +161,12 @@ addEventListener('pointerdown', e=>{
   const lx=(e.clientX-r.left)/r.width*(W+2*FMX)-FMX, ly=(e.clientY-r.top)/r.height*(H+2*FMY)-FMY;   // account for frame
   const hit=b=>lx>=b.x&&lx<=b.x+b.w&&ly>=b.y&&ly<=b.y+b.h;
   if(started){
-    if(paused && !matchOver){
+    if(matchOver){
+      const Wl=winLayout();
+      if(hit(Wl.rematch)) startMatch();
+      else if(hit(Wl.menu)){ started=false; matchOver=false; }   // clear so the win overlay doesn't draw over the title
+    }
+    else if(paused){
       const P=pauseLayout();
       if(hit(P.resume)) togglePause();
       else if(hit(P.quit)){ paused=false; started=false; }
@@ -333,12 +338,13 @@ function buildTeams(){
 }
 
 // ball
-const ball = { x:W/2, y:H/2, vx:0, vy:0, z:0, vz:0, ra:22, rb:13, angle:0, spin:0, roll:0, squash:0, trail:[] };
+const ball = { x:W/2, y:H/2, vx:0, vy:0, z:0, vz:0, ra:22, rb:13, angle:0, spin:0, roll:0, rollV:0, squash:0, trail:[] };
 let score=[0,0];
 
 function kickoff(){
   ball.x=W/2; ball.y=H/2; ball.vx=0; ball.vy=0; ball.z=0; ball.vz=0; ball.squash=0;
-  ball.angle=Math.random()*Math.PI; ball.spin=0; ball.trail.length=0; scored=false; lastTouch=null;
+  ball.angle=Math.random()*Math.PI; ball.spin=0; ball.roll=0; ball.rollV=0; ball.trail.length=0; scored=false; lastTouch=null;   // roll=0 -> seam faces front, threads visible at rest (angle stays random)
+  playFrames=0;   // restart the no-wear grace so the straight kickoff rush leaves no trail
   countdownMs=COUNTDOWN_MS; goMs=0;   // 3-2-1 get-ready before play resumes
   ['blue','red'].forEach(t=>{
     const mem=players.filter(p=>p.team===t);
@@ -487,9 +493,12 @@ function moveBall(){
       else ball.vz=0;
     }
   }
-  // roll phase advances with velocity ACROSS the short axis -> rolls fast broadside, little when pointy
+  // roll phase: pick a steady direction from cross-axis travel, then advance MONOTONICALLY at ball speed.
+  // smoothing kills the orientation wobble that used to make the seam flick back and forth; the seam now
+  // sweeps one way and fades round the back (depth alpha), reversing only when the ball truly reverses.
   const vShort = -ball.vx*Math.sin(ball.angle) + ball.vy*Math.cos(ball.angle);
-  ball.roll += vShort*0.06;
+  ball.rollV = ball.rollV*0.9 + vShort*0.1;                       // low-passed cross-axis velocity -> stable sign
+  if(sp>0.05) ball.roll += Math.sign(ball.rollV||1) * sp * 0.05;   // advance at travel speed in that one direction
 
   ball.trail.push({x:ball.x,y:ball.y}); if(ball.trail.length>14) ball.trail.shift();
 
@@ -567,6 +576,7 @@ function collidePlayers(){
 // ---- goal fx ----
 const msg=document.getElementById('msg');
 let freeze=0, shake=0, simStep=0, lastKickStep=-99;
+let playFrames=0;   // play-frames since kickoff (excludes countdown/freeze); gates the kickoff-rush wear trail
 let timeScale=1, goalMs=0, scored=false, pendingWin=null;   // goal slow-mo + re-score guard
 let lastTouch=null;   // team of the last player to touch the ball (for self-goals)
 const COUNTDOWN_MS=2400; let countdownMs=0, goMs=0;   // 3-2-1 then GO! before each kickoff
@@ -593,12 +603,11 @@ function onTimeUp(){
 
 function goal(who){
   const aerial = ball.z>AIR_CLEAR;   // scored while airborne
-  const self = lastTouch === (who===0?'red':'blue');   // last toucher put it in their OWN net
   scored=true;                       // block re-scoring while the ball drifts into the net
   setScoreHUD();
   const tc = teamCol(who===0?'blue':'red');
-  msg.textContent = self ? 'SELF GOAL!' : aerial ? 'AERIAL GOAL!' : (who===0?'HOME SCORES!':'AWAY SCORES!');
-  msg.style.color  = (self||aerial) ? '#ffd36b' : tc;
+  msg.textContent = aerial ? 'AERIAL GOAL!' : (who===0?'HOME SCORES!':'AWAY SCORES!');
+  msg.style.color  = aerial ? '#ffd36b' : tc;
   msg.style.opacity=1;
   shake = aerial?52:44; sndGoal(who);                       // cranked-up shake
   const gy = ball.y-ball.z;
@@ -661,6 +670,10 @@ function pauseLayout(){
   const cx=W/2, cy=H/2;
   return { resume:{x:cx-115,y:cy-4,w:230,h:46}, quit:{x:cx-115,y:cy+54,w:230,h:46} };
 }
+function winLayout(){
+  const cx=W/2, cy=H/2, bw=180, g=16, bh=46, by=cy+40;
+  return { rematch:{x:cx-bw-g/2, y:by, w:bw, h:bh}, menu:{x:cx+g/2, y:by, w:bw, h:bh} };
+}
 
 // ordered home-menu rows for gamepad navigation (each: rects, adjust(dir), activate)
 function menuNav(){
@@ -676,10 +689,10 @@ function menuNav(){
 
 // home-screen setup panel layout (logical coords), shared by draw + click hit-testing
 function homeLayout(){
-  const cx=W/2, cy=H/2, tabW=132, g=8, btn=38, boxW=64;
+  const cx=W/2, cy=H/2+26, tabW=132, g=8, btn=38, boxW=64;   // +26 nudges title+menu down, sitting a touch above center
   const showTeams=(teamSize===2 && numHumans===2);
   return {
-    titleY:  cy-176,
+    titleY:  cy-198,
     // match format row + value + (label sits BELOW the stepper)
     fmtTimed:{x:cx-tabW-g/2, y:cy-116, w:tabW, h:34},
     fmtPts:  {x:cx+g/2,      y:cy-116, w:tabW, h:34},
@@ -807,7 +820,7 @@ function draw(){
   const off = Math.sin(ball.roll)*ball.rb*0.8;
   const depth = Math.cos(ball.roll);                       // front (>0) vs far side (<0)
   const half = ball.ra*0.55*Math.sqrt(Math.max(0, 1-(off/ball.rb)*(off/ball.rb)));
-  ctx.globalAlpha = 0.3 + 0.7*Math.max(0, depth);         // fade as the seam rolls to the back
+  ctx.globalAlpha = Math.max(0, depth);                    // back half fully hidden -> seam sweeps ONE way, vanishes round the back, reappears at the same edge
   ctx.strokeStyle='#f4ead2'; ctx.lineWidth=2;
   ctx.beginPath(); ctx.moveTo(-half, off); ctx.lineTo(half, off); ctx.stroke();
   for(let i=-2;i<=2;i++){ const x=i*(half/2.6); ctx.beginPath(); ctx.moveTo(x, off-4); ctx.lineTo(x, off+4); ctx.stroke(); }
@@ -864,7 +877,7 @@ function draw(){
     const L=homeLayout();
     ctx.fillStyle='rgba(6,10,20,.82)'; ctx.fillRect(-FMX-400,-FMY-400,W+2*FMX+800,H+2*FMY+800);
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='#ffd36b'; ctx.font='98px "Jaro", Impact, Haettenschweiler, sans-serif';
+    ctx.fillStyle='#ffd36b'; ctx.font='112px "Jaro", Impact, Haettenschweiler, sans-serif';
     ctx.letterSpacing='-1px'; ctx.fillText('FOOTBALL FÚTBOL', W/2, L.titleY); ctx.letterSpacing='0px';
     const tab=(r,txt,on)=>{ ctx.fillStyle=on?'#3fe35a':'rgba(255,255,255,.08)'; ctx.fillRect(r.x,r.y,r.w,r.h);
       ctx.fillStyle=on?'#0b1020':'rgba(230,236,255,.7)'; ctx.font='bold 15px "Quantico", ui-monospace, monospace';
@@ -926,13 +939,17 @@ function draw(){
   // win overlay
   if(matchOver){
     ctx.fillStyle='rgba(6,10,20,.6)'; ctx.fillRect(-FMX-400,-FMY-400,W+2*FMX+800,H+2*FMY+800);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
     { const wc=teamCol(winner===0?'blue':'red'); ctx.fillStyle = lum(wc)<0.35 ? '#e6ecff' : wc; }
     ctx.font='70px "Jaro", Impact, sans-serif';
-    ctx.fillText((winner===0?'HOME':'AWAY')+' WINS', W/2, H/2-6);
-    ctx.fillStyle='rgba(230,236,255,.9)'; ctx.font='20px "Quantico", ui-monospace, monospace';
-    ctx.fillText(score[0]+' — '+score[1], W/2, H/2+30);
-    ctx.font='15px "Quantico", ui-monospace, monospace'; ctx.fillStyle='rgba(230,236,255,.6)';
-    ctx.fillText('press SPACE to play again', W/2, H/2+62);
+    ctx.fillText((winner===0?'HOME':'AWAY')+' WINS', W/2, H/2-52);
+    ctx.fillStyle='#e6ecff'; ctx.font='40px "Jaro", Impact, sans-serif';   // score in the same bold face
+    ctx.fillText(score[0]+' — '+score[1], W/2, H/2-4);
+    const Wl=winLayout();
+    const wbtn=(r,txt)=>{ ctx.fillStyle='#ffd36b'; ctx.fillRect(r.x,r.y,r.w,r.h);
+      ctx.fillStyle='#181425'; ctx.font='bold 18px "Quantico", ui-monospace, monospace'; ctx.fillText(txt, r.x+r.w/2, r.y+r.h/2+1); };
+    wbtn(Wl.rematch,'REMATCH'); wbtn(Wl.menu,'RETURN TO MENU');
+    ctx.textBaseline='alphabetic';
   }
   ctx.textAlign='start';
 
@@ -976,9 +993,13 @@ function update(){
   moveBall();
   for(const p of players) collide(p);
   // grind grass -> dirt where players run; whole layer erodes slowly so trails recover
+  // hold off during the kickoff rush (until first ball touch, or ~1s of play) so the identical
+  // start->ball beelines don't burn in a fake straight line every round
+  playFrames++;
+  const wearOn = lastTouch!==null || playFrames>60;
   wctx.globalCompositeOperation='source-over';
   wctx.fillStyle='rgba(70,54,32,0.02)';
-  for(const p of players){ if(Math.hypot(p.vx,p.vy)>0.6){ wctx.beginPath(); wctx.ellipse(p.x,p.y,p.r*0.66,p.r*0.46,0,0,7); wctx.fill(); } }
+  if(wearOn) for(const p of players){ if(Math.hypot(p.vx,p.vy)>0.6){ wctx.beginPath(); wctx.ellipse(p.x,p.y,p.r*0.66,p.r*0.46,0,0,7); wctx.fill(); } }
   if(ball.z<2 && Math.hypot(ball.vx,ball.vy)>1){ wctx.fillStyle='rgba(70,54,32,0.012)'; wctx.beginPath(); wctx.ellipse(ball.x,ball.y,ball.rb*0.6,ball.rb*0.45,0,0,7); wctx.fill(); }
   wctx.globalCompositeOperation='destination-out'; wctx.fillStyle='rgba(0,0,0,0.003)'; wctx.fillRect(0,0,900,560);   // slow recovery -> wear lingers a while
   wctx.globalCompositeOperation='source-over';
@@ -1004,6 +1025,9 @@ function frame(now){
     } else if(!matchOver){
       if(START&&!P.start) togglePause();
       if(paused){ if(A&&!P.a) togglePause(); if(B&&!P.b){ paused=false; started=false; } }
+    } else {   // win screen: A = rematch, B = return to menu
+      if(A&&!P.a){ startMatch(); ensureAudio(); }
+      if(B&&!P.b){ started=false; matchOver=false; }
     }
     gpPrev={up,down,left,right,a:A,b:B,start:START};
   }
