@@ -150,7 +150,7 @@ addEventListener('keydown', e => {
   if (matchOver && (k===' '||k==='enter')) { startMatch(); ensureAudio(); return; }
   if (k === 'escape' || k === 'p') { if(started && !matchOver) togglePause(); }
   if (k === 'c') { palIdx=(palIdx+1)%PALETTES.length; applyPalette(); flashMsg('Colors: '+PALETTES[palIdx].name); }
-  if (k === 'm') muted = !muted;
+  if (k === 'm') { muted = !muted; crowdMuted(muted); }
   if (k === 'x') PIXEL = !PIXEL;   // toggle pixelation (dev)
   ensureAudio();
 });
@@ -202,7 +202,7 @@ function flashMode(){ flashMsg(modeName()); }
 
 // ---- audio ----
 let ac = null;
-function ensureAudio(){ if(!ac){ try{ ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(ac&&ac.state==='suspended') ac.resume(); }
+function ensureAudio(){ if(!ac){ try{ ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(ac&&ac.state==='suspended') ac.resume(); startCrowd(); }
 function beep(freq,dur,type='sine',vol=0.2,slideTo=null){
   if(!ac||muted) return;
   const o=ac.createOscillator(), g=ac.createGain();
@@ -237,6 +237,38 @@ function sndGoal(who){
   const o2=ac.createOscillator(); o2.type='square'; o2.frequency.setValueAtTime(base*1.005,t); o2.frequency.linearRampToValueAtTime(base*1.18*1.005,t+0.14);
   o.connect(g); o2.connect(g); g.connect(ac.destination);
   o.start(t); o2.start(t); o.stop(t+1.35); o2.stop(t+1.35);
+}
+// ---- ambient crowd bed + goal roar ----
+// tuned preset: a quiet murmur that swells into a roar on each goal.
+// chain: brown-noise loop -> bandpass -> gain(+LFO swell) -> mute -> out
+const CROWD      = { bp:1000, q:2.5, gain:0.05, lfoRate:0.05, lfoDepth:0.01, rumble:0.2 };
+const CROWD_ROAR = { gain:0.35, bp:1110, attack:0.4, hold:1.5, release:1.8 };
+let crowd = null;   // { gain, bp, mute } once the bed is running
+function startCrowd(){
+  if(!ac || crowd) return;
+  const len=2*ac.sampleRate, buf=ac.createBuffer(1,len,ac.sampleRate), d=buf.getChannelData(0);
+  let last=0;   // one-pole low-pass on white noise = brown/red noise rumble
+  for(let i=0;i<len;i++){ const w=Math.random()*2-1; d[i]=(last+CROWD.rumble*w)/(1+CROWD.rumble); last=d[i]; d[i]*=3.5; }
+  const src=ac.createBufferSource(); src.buffer=buf; src.loop=true;
+  const bp=ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=CROWD.bp; bp.Q.value=CROWD.q;
+  const gain=ac.createGain(); gain.gain.setValueAtTime(CROWD.gain, ac.currentTime);
+  const lfo=ac.createOscillator(), lfoGain=ac.createGain();   // slow swell rides the base gain
+  lfo.frequency.value=CROWD.lfoRate; lfoGain.gain.value=CROWD.lfoDepth;
+  lfo.connect(lfoGain); lfoGain.connect(gain.gain);
+  const mute=ac.createGain(); mute.gain.value=muted?0:1;   // follows the M toggle
+  src.connect(bp); bp.connect(gain); gain.connect(mute); mute.connect(ac.destination);
+  lfo.start(); src.start();
+  crowd={ gain, bp, mute };
+}
+function crowdMuted(m){ if(crowd) crowd.mute.gain.setTargetAtTime(m?0:1, ac.currentTime, 0.05); }
+// swell: crank gain + push bandpass up, hold, then sweep back to baseline
+function crowdRoar(){
+  if(!crowd) return;
+  const now=ac.currentTime, g=crowd.gain.gain, f=crowd.bp.frequency;
+  g.cancelScheduledValues(now); f.cancelScheduledValues(now);
+  const t1=now+CROWD_ROAR.attack, t2=t1+CROWD_ROAR.hold, t3=t2+CROWD_ROAR.release;
+  g.setValueAtTime(CROWD.gain,now); g.linearRampToValueAtTime(CROWD_ROAR.gain,t1); g.setValueAtTime(CROWD_ROAR.gain,t2); g.linearRampToValueAtTime(CROWD.gain,t3);
+  f.setValueAtTime(CROWD.bp,now);   f.linearRampToValueAtTime(CROWD_ROAR.bp,t1);   f.setValueAtTime(CROWD_ROAR.bp,t2);   f.linearRampToValueAtTime(CROWD.bp,t3);
 }
 
 // ---- movement tuning ----
@@ -283,7 +315,9 @@ function burst(x,y,color,n){
 // ---- gamepad ----
 let padEnabled=true;
 function connectedPads(){
-  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let pads = [];
+  try { if(navigator.getGamepads) pads = navigator.getGamepads(); }   // policy-blocked in sandboxed iframes -> ignore
+  catch(e){ padEnabled=false; return []; }
   const list=[];
   for(let i=0;i<pads.length;i++){ if(pads[i] && pads[i].connected) list.push(pads[i]); }
   return list;   // ignore empty index slots -> Xbox pad found wherever it lands
@@ -609,7 +643,7 @@ function goal(who){
   msg.textContent = aerial ? 'AERIAL GOAL!' : (who===0?'HOME SCORES!':'AWAY SCORES!');
   msg.style.color  = aerial ? '#ffd36b' : tc;
   msg.style.opacity=1;
-  shake = aerial?52:44; sndGoal(who);                       // cranked-up shake
+  shake = aerial?52:44; sndGoal(who); crowdRoar();          // cranked-up shake + crowd swell
   const gy = ball.y-ball.z;
   burst(ball.x, gy, tc, aerial?70:48);
   if(aerial){ burst(ball.x, gy, '#ffd36b', 34); beep(660,0.12,'square',0.2); setTimeout(()=>beep(990,0.28,'square',0.2),140); }  // gold sparkle + fanfare
