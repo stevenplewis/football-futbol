@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Football Fútbol</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Jaro:opsz@6..72&family=Quantico:wght@400;700&display=swap" rel="stylesheet">
@@ -586,7 +587,7 @@ function startMatch(){
 }
 function endMatch(who){ matchOver=true; winner=who; msg.style.opacity=0; shake=Math.max(shake,26); }
 function onTimeUp(){
-  if(score[0]===score[1]){ golden=true; flashMsg('SUDDEN DEATH','#ffd36b',1300); }   // tie -> golden goal, play continues from here
+  if(score[0]===score[1]){ golden=true; }   // tie -> golden goal, play continues (status shown by pulsing HUD)
   else endMatch(score[0]>score[1]?0:1);
 }
 
@@ -845,11 +846,15 @@ function draw(){
     ctx.save(); ctx.textBaseline='middle'; ctx.shadowColor='#000'; ctx.shadowBlur=12; ctx.shadowOffsetY=3;
     ctx.fillStyle='#ff3b30'; ctx.font='bold '+Math.round(46*pulse)+'px "Jaro", Impact, sans-serif';
     ctx.fillText(secs, W/2, 40); ctx.restore(); ctx.textBaseline='alphabetic';
+  } else if(golden && !matchOver){
+    const pulse=1+Math.sin(simStep*0.5)*0.12;                        // same red pulse as the final-seconds countdown
+    ctx.save(); ctx.textBaseline='middle'; ctx.shadowColor='#000'; ctx.shadowBlur=12; ctx.shadowOffsetY=3;
+    ctx.fillStyle='#ff3b30'; ctx.font='bold '+Math.round(38*pulse)+'px "Jaro", Impact, sans-serif';
+    ctx.fillText('SUDDEN DEATH', W/2, 42); ctx.restore(); ctx.textBaseline='alphabetic';
   } else {
     ctx.font='bold 16px "Quantico", ui-monospace, monospace';
     let stat;
-    if(golden){ stat='SUDDEN DEATH'; ctx.fillStyle='#ffd36b'; }
-    else if(fmtType==='timed'){ const s=Math.ceil(clock/60); stat=Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); ctx.fillStyle='rgba(230,236,255,.85)'; }
+    if(fmtType==='timed'){ const s=Math.ceil(clock/60); stat=Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); ctx.fillStyle='rgba(230,236,255,.85)'; }
     else { stat='First to '+targetPts; ctx.fillStyle='rgba(230,236,255,.85)'; }
     ctx.fillText(stat, W/2, 22);
   }
@@ -961,7 +966,10 @@ function update(){
   }
   if(fmtType==='timed' && !golden && !pendingTimeUp && clock>0){
     clock--;
-    if(clock<=0){ clock=0; settling=true; settleFrames=0; players.forEach(p=>{p.vx=0;p.vy=0;}); return; }
+    if(clock<=0){ clock=0;
+      if(score[0]===score[1]){ golden=true; }   // tie -> keep playing, no freeze, no ball-settle (status shown by pulsing HUD)
+      else { settling=true; settleFrames=0; players.forEach(p=>{p.vx=0;p.vy=0;}); return; }   // someone leads -> freeze players, ball finishes rolling
+    }
   }
   for(const p of players){ if(p.ai) aiControl(p); else humanInput(p); }
   collidePlayers();
