@@ -217,7 +217,7 @@ function flashMode(){ flashMsg(modeName()); }
 
 // ---- audio ----
 let ac = null;
-const crowdVol = 0.66, musicVol = 1.85;   // baked mix balance (crowd vs music)
+const crowdVol = 0.66, musicVol = 1.65;   // baked mix balance (crowd vs music)
 function ensureAudio(){ if(!ac){ try{ ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(ac&&ac.state==='suspended') ac.resume(); startCrowd(); startMusic(); }
 function beep(freq,dur,type='sine',vol=0.2,slideTo=null,when=0){
   if(!ac||muted) return;
@@ -253,8 +253,8 @@ function sndGoal(who){
   if(!ac||muted) return;
   const t=ac.currentTime, base=who===0?300:262;
   const g=ac.createGain();
-  g.gain.setValueAtTime(0.001,t); g.gain.exponentialRampToValueAtTime(0.13,t+0.04);
-  g.gain.setValueAtTime(0.13,t+0.95); g.gain.exponentialRampToValueAtTime(0.0001,t+1.35);
+  g.gain.setValueAtTime(0.001,t); g.gain.exponentialRampToValueAtTime(0.045,t+0.04);
+  g.gain.setValueAtTime(0.045,t+0.95); g.gain.exponentialRampToValueAtTime(0.0001,t+1.35);
   const o=ac.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(base,t); o.frequency.linearRampToValueAtTime(base*1.18,t+0.14);
   const o2=ac.createOscillator(); o2.type='square'; o2.frequency.setValueAtTime(base*1.005,t); o2.frequency.linearRampToValueAtTime(base*1.18*1.005,t+0.14);
   o.connect(g); o2.connect(g); g.connect(ac.destination);
