@@ -37,6 +37,7 @@
 <canvas id="c" width="900" height="560"></canvas>
 <div class="keys">
   HOME <span>WASD</span> boost <span>L-Shift</span> &nbsp;·&nbsp; AWAY(2p) <span>↑←↓→</span> boost <span>R-Shift</span><br>
+  GAMEPAD <span>L-Stick</span> move <span>A</span> boost &nbsp;·&nbsp; 3–4 players require gamepads<br>
   <span>ESC</span> pause &nbsp; <span>C</span> colors &nbsp; <span>M</span> mute
 </div>
 <div id="msg"></div>
@@ -69,16 +70,29 @@ const noiseTile = document.createElement('canvas'); noiseTile.width=noiseTile.he
 })();
 let noisePattern=null;
 
+// soft green mottle tile: painterly light/dark patches over the base green (cheap, repeats)
+const mottleTile = document.createElement('canvas'); mottleTile.width=mottleTile.height=300;
+(()=>{ const mc=mottleTile.getContext('2d');
+  const blobs=['rgba(120,200,110,.16)','rgba(90,170,80,.14)','rgba(20,80,40,.14)','rgba(200,240,150,.10)'];
+  for(let i=0;i<90;i++){
+    const x=Math.random()*300, y=Math.random()*300, r=18+Math.random()*46;
+    const g=mc.createRadialGradient(x,y,0,x,y,r);
+    const col=blobs[(Math.random()*blobs.length)|0];
+    g.addColorStop(0,col); g.addColorStop(1,'rgba(0,0,0,0)');
+    mc.fillStyle=g; mc.beginPath(); mc.arc(x,y,r,0,7); mc.fill();
+  }
+})();
+let mottlePattern=null;
+
 // dirt-wear layer: players grind grass down to dirt where they run (fades back slowly)
 const wear=document.createElement('canvas'); wear.width=900; wear.height=560;
 const wctx=wear.getContext('2d');
-// static scattered decor for texture: grass tufts, flowers, rocks
-const tufts=[], flowers=[], rocks=[];
+// static scattered decor for texture: grass tufts + a few flowers (no rocks)
+const tufts=[], flowers=[];
 (()=>{
-  for(let i=0;i<95;i++) tufts.push({x:16+Math.random()*(900-32), y:8+Math.random()*(560-16), light:Math.random()<0.5, s:0.7+Math.random()*0.7});
+  for(let i=0;i<170;i++) tufts.push({x:16+Math.random()*(900-32), y:8+Math.random()*(560-16), light:Math.random()<0.5, s:0.7+Math.random()*0.7});
   const petals=['#ff6fae','#ffe14d','#ffffff','#c58cff','#ff8c2b'];
-  for(let i=0;i<15;i++) flowers.push({x:30+Math.random()*(900-60), y:30+Math.random()*(560-60), c:petals[(Math.random()*petals.length)|0], s:0.75+Math.random()*0.6});
-  for(let i=0;i<9;i++) rocks.push({x:30+Math.random()*(900-60), y:30+Math.random()*(560-60), s:0.7+Math.random()*0.8});
+  for(let i=0;i<6;i++) flowers.push({x:30+Math.random()*(900-60), y:30+Math.random()*(560-60), c:petals[(Math.random()*petals.length)|0], s:0.75+Math.random()*0.6});
 })();
 // CRT scanline tile (1px dark line every 3px)
 const scanTile=document.createElement('canvas'); scanTile.width=1; scanTile.height=3;
@@ -767,7 +781,7 @@ function drawNet(x0,x1,front){
   ctx.restore();
 }
 
-// scattered ground decor (static): grass tufts, rocks, flowers
+// scattered ground decor (static): grass tufts + a few flowers
 function drawTufts(){
   // grass blades
   ctx.lineCap='round';
@@ -782,13 +796,6 @@ function drawTufts(){
     ctx.stroke();
   }
   ctx.lineCap='butt';
-  // rocks (hard shadow + gray body + highlight)
-  for(const k of rocks){
-    const r=7*k.s;
-    ctx.fillStyle='rgba(0,20,6,.3)'; ctx.beginPath(); ctx.ellipse(k.x+2, k.y+3, r, r*0.7, 0,0,7); ctx.fill();
-    ctx.fillStyle='#8b909a'; ctx.beginPath(); ctx.ellipse(k.x, k.y, r, r*0.72, 0,0,7); ctx.fill();
-    ctx.fillStyle='rgba(255,255,255,.25)'; ctx.beginPath(); ctx.ellipse(k.x-r*0.3, k.y-r*0.25, r*0.4, r*0.28, 0,0,7); ctx.fill();
-  }
   // flowers (stem + petals + center)
   for(const f of flowers){
     const s=f.s, x=f.x, y=f.y;
@@ -885,6 +892,8 @@ function draw(){
   ctx.fillStyle='#1f6b39'; ctx.fillRect(0,0,W,H);
   ctx.fillStyle='rgba(255,255,255,.03)';                       // mow stripes (amped for pixelation)
   for(let i=0;i<8;i+=2) ctx.fillRect(i*W/8,0,W/8,H);
+  if(!mottlePattern) mottlePattern=ctx.createPattern(mottleTile,'repeat');
+  ctx.fillStyle=mottlePattern; ctx.fillRect(0,0,W,H);   // soft painterly green patches
   if(!noisePattern) noisePattern=ctx.createPattern(noiseTile,'repeat');
   ctx.globalAlpha=0.85; ctx.fillStyle=noisePattern; ctx.fillRect(0,0,W,H); ctx.globalAlpha=1;
   drawTufts();                          // scattered grass blades
