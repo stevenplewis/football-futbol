@@ -649,6 +649,11 @@ function aiControl(p){
     if(distBall>380) wantBoost=true;
   }
 
+  // escape the goal pocket first: if we're inside one and the ball isn't, steer out through the mouth
+  const bandY = Math.max(goalY0+p.r+4, Math.min(goalY1-p.r-4, p.y));   // aim at the opening, not the side walls
+  if(p.x < GD && ball.x > GD){ tx = GD + p.r + 10; ty = bandY; wantBoost=false; }
+  else if(p.x > W-GD && ball.x < W-GD){ tx = W-GD - p.r - 10; ty = bandY; wantBoost=false; }
+
   let ax=(tx+p.errx)-p.x, ay=(ty+p.erry)-p.y;
   if(Math.hypot(ax,ay)<6){ ax=0; ay=0; }
   if(wantBoost && p.energy>=BOOST_COST){
@@ -773,6 +778,7 @@ const msg=document.getElementById('msg');
 let freeze=0, shake=0, simStep=0, lastKickStep=-99;
 let playFrames=0;   // play-frames since kickoff (excludes countdown/freeze); gates the kickoff-rush wear trail
 let timeScale=1, goalMs=0, scored=false, pendingWin=null;   // goal slow-mo + re-score guard
+let goalMsg='', goalMsgCol='#ffd36b';   // goal banner drawn on the canvas (same size/spot as the countdown)
 let lastTouch=null;   // team of the last player to touch the ball (for self-goals)
 const COUNTDOWN_MS=2400; let countdownMs=0, goMs=0;   // 3-2-1 then GO! before each kickoff
 
@@ -802,9 +808,8 @@ function goal(who){
   scored=true;                       // block re-scoring while the ball drifts into the net
   setScoreHUD();
   const tc = teamCol(who===0?'blue':'red');
-  msg.textContent = aerial ? 'AERIAL GOAL!' : (who===0?'HOME SCORES!':'AWAY SCORES!');
-  msg.style.color  = aerial ? '#ffd36b' : tc;
-  msg.style.opacity=1;
+  goalMsg    = aerial ? 'AERIAL GOAL!' : (who===0?'HOME SCORES!':'AWAY SCORES!');
+  goalMsgCol = aerial ? '#ffd36b' : tc;
   shake = aerial?52:44; sndGoal(who); crowdRoar();          // cranked-up shake + crowd swell
   const gy = ball.y-ball.z;
   burst(ball.x, gy, tc, aerial?70:48);
@@ -1113,6 +1118,19 @@ function draw(){
     ctx.restore();
   }
 
+  // goal banner — same size/position as the countdown (84px Jaro at H*0.3), fades as the celebration ends
+  if(started && goalMsg && goalMs>0){
+    ctx.save();
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowColor='#000'; ctx.shadowBlur=20; ctx.shadowOffsetY=4;
+    ctx.globalAlpha = Math.min(1, goalMs/350);        // fade out over the last 350ms
+    ctx.font='84px "Jaro", Impact, sans-serif';
+    const maxW=W*0.9, tw=ctx.measureText(goalMsg).width;   // shrink to fit long strings, keep 84px otherwise
+    if(tw>maxW) ctx.font=(84*maxW/tw)+'px "Jaro", Impact, sans-serif';
+    ctx.fillStyle=goalMsgCol; ctx.fillText(goalMsg, W/2, H*0.3);
+    ctx.restore();
+  }
+
   // pause menu
   if(started && paused && !matchOver){
     ctx.fillStyle='rgba(6,10,20,.8)'; ctx.fillRect(-FMX-400,-FMY-400,W+2*FMX+800,H+2*FMY+800);
@@ -1226,7 +1244,7 @@ function frame(now){
   }
   if(!paused){                            // everything frozen while paused
     // goal celebration timer runs in REAL time so slow-mo lasts a fixed duration
-    if(goalMs>0){ goalMs-=dt; if(goalMs<=0){ timeScale=1; msg.style.opacity=0; if(pendingWin!=null){ endMatch(pendingWin); pendingWin=null; } else if(pendingTimeUp){ pendingTimeUp=false; onTimeUp(); } else kickoff(); } }
+    if(goalMs>0){ goalMs-=dt; if(goalMs<=0){ timeScale=1; goalMsg=''; if(pendingWin!=null){ endMatch(pendingWin); pendingWin=null; } else if(pendingTimeUp){ pendingTimeUp=false; onTimeUp(); } else kickoff(); } }
     if(started && countdownMs>0){ const prev=countdownMs; countdownMs-=dt;
       if(Math.ceil(countdownMs/800)!==Math.ceil(prev/800) && countdownMs>0) sndCount();   // beep on each 3-2-1 tick
       if(prev>0 && countdownMs<=0){ goMs=450; sndGo(); } }                                  // and the GO!
