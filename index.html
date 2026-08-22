@@ -201,7 +201,7 @@ addEventListener('pointerdown', e=>{
   else if(L.showTeams && hit(L.splitTab)){ humanSplit=true; }
   else if(hit(L.start)){ started=true; startMatch(); }
 });
-function togglePause(){ if(paused){ paused=false; countdownMs=COUNTDOWN_MS; goMs=0; } else { paused=true; } }   // 3-2-1 on resume
+function togglePause(){ if(paused){ paused=false; countdownMs=COUNTDOWN_MS; goMs=0; sndCount(); } else { paused=true; } }   // 3-2-1 on resume
 function modeName(){
   const ai = teamSize*2 - numHumans;
   const m = (teamSize===1?'1v1':'2v2') + ' · ' + numHumans + 'P' + (ai>0?' +'+ai+' AI':'');
@@ -218,14 +218,15 @@ function flashMode(){ flashMsg(modeName()); }
 let ac = null;
 const crowdVol = 0.66, musicVol = 1.85;   // baked mix balance (crowd vs music)
 function ensureAudio(){ if(!ac){ try{ ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(ac&&ac.state==='suspended') ac.resume(); startCrowd(); startMusic(); }
-function beep(freq,dur,type='sine',vol=0.2,slideTo=null){
+function beep(freq,dur,type='sine',vol=0.2,slideTo=null,when=0){
   if(!ac||muted) return;
+  const t0=ac.currentTime+when;
   const o=ac.createOscillator(), g=ac.createGain();
-  o.type=type; o.frequency.setValueAtTime(freq,ac.currentTime);
-  if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,ac.currentTime+dur);
-  g.gain.setValueAtTime(vol,ac.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+dur);
-  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime+dur);
+  o.type=type; o.frequency.setValueAtTime(freq,t0);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t0+dur);
+  g.gain.setValueAtTime(vol,t0);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  o.connect(g); g.connect(ac.destination); o.start(t0); o.stop(t0+dur);
 }
 // filtered-noise burst -> thud / impact texture
 function noiseBurst(dur, cutoff, vol){
@@ -241,6 +242,11 @@ function noiseBurst(dur, cutoff, vol){
 const sndKick =s=>{ const p=Math.min(s,10); noiseBurst(0.14, 340+p*45, 0.16+p*0.03); beep(70+p*8, 0.12, 'sine', 0.20, 44); };
 const sndWall =()=>{ noiseBurst(0.06, 520, 0.12); beep(90,0.06,'sine',0.10,60); };
 const sndBoost=()=>beep(300,0.22,'sawtooth',0.14,700);
+// countdown tick (3-2-1) and the GO! blip — soft; heard several times a match
+const sndCount=()=>beep(780,0.10,'square',0.05);
+const sndGo   =()=>beep(1180,0.20,'square',0.06);
+// match-end: three even clock beeps, quiet and quick
+const sndEnd  =()=>{ for(let i=0;i<3;i++) beep(880,0.12,'square',0.06,null,i*0.18); };
 // extended stadium buzzer — a sustained buzzy "goooaal"
 function sndGoal(who){
   if(!ac||muted) return;
@@ -286,13 +292,16 @@ function updateCrowdGate(){
 }
 function crowdMuted(m){ if(crowd) crowd.mute.gain.setTargetAtTime(m?0:1, ac.currentTime, 0.05); }
 // swell: crank gain + push bandpass up, hold, then sweep back to baseline
-function crowdRoar(){
+// scale<1 = gentler swell (used for the kickoff whistle vs a full goal roar)
+function crowdRoar(scale=1){
   if(!crowd) return;
   const now=ac.currentTime, g=crowd.gain.gain, f=crowd.bp.frequency;
+  const peakG=CROWD.gain+(CROWD_ROAR.gain-CROWD.gain)*scale;
+  const peakF=CROWD.bp  +(CROWD_ROAR.bp  -CROWD.bp )*scale;
   g.cancelScheduledValues(now); f.cancelScheduledValues(now);
   const t1=now+CROWD_ROAR.attack, t2=t1+CROWD_ROAR.hold, t3=t2+CROWD_ROAR.release;
-  g.setValueAtTime(CROWD.gain,now); g.linearRampToValueAtTime(CROWD_ROAR.gain,t1); g.setValueAtTime(CROWD_ROAR.gain,t2); g.linearRampToValueAtTime(CROWD.gain,t3);
-  f.setValueAtTime(CROWD.bp,now);   f.linearRampToValueAtTime(CROWD_ROAR.bp,t1);   f.setValueAtTime(CROWD_ROAR.bp,t2);   f.linearRampToValueAtTime(CROWD.bp,t3);
+  g.setValueAtTime(CROWD.gain,now); g.linearRampToValueAtTime(peakG,t1); g.setValueAtTime(peakG,t2); g.linearRampToValueAtTime(CROWD.gain,t3);
+  f.setValueAtTime(CROWD.bp,now);   f.linearRampToValueAtTime(peakF,t1);   f.setValueAtTime(peakF,t2);   f.linearRampToValueAtTime(CROWD.bp,t3);
 }
 
 // ---- menu/game music: drum machine + driving bass (tuned in the music lab) ----
@@ -494,7 +503,7 @@ function kickoff(){
   ball.x=W/2; ball.y=H/2; ball.vx=0; ball.vy=0; ball.z=0; ball.vz=0; ball.squash=0;
   ball.angle=Math.random()*Math.PI; ball.spin=0; ball.roll=0; ball.rollV=0; ball.trail.length=0; scored=false; lastTouch=null;   // roll=0 -> seam faces front, threads visible at rest (angle stays random)
   playFrames=0;   // restart the no-wear grace so the straight kickoff rush leaves no trail
-  countdownMs=COUNTDOWN_MS; goMs=0;   // 3-2-1 get-ready before play resumes
+  countdownMs=COUNTDOWN_MS; goMs=0; sndCount();   // 3-2-1 get-ready (beep the first tick; 2 & 1 fire on the boundary)
   ['blue','red'].forEach(t=>{
     const mem=players.filter(p=>p.team===t);
     const baseX = t==='blue'? W*0.2 : W*0.8;
@@ -743,8 +752,9 @@ function startMatch(){
   clock = fmtType==='timed' ? timedMins*60*60 : 0;   // minutes * 60s * 60fps (sim steps)
   wctx.clearRect(0,0,900,560);                        // fresh field each match
   setScoreHUD(); buildTeams();
+  crowdRoar(0.5);                                      // slight kickoff crowd swell (gentler than a goal roar)
 }
-function endMatch(who){ matchOver=true; winner=who; msg.style.opacity=0; shake=Math.max(shake,26); }
+function endMatch(who){ matchOver=true; winner=who; msg.style.opacity=0; shake=Math.max(shake,26); sndEnd(); }
 function onTimeUp(){
   if(score[0]===score[1]){ golden=true; }   // tie -> golden goal, play continues (status shown by pulsing HUD)
   else endMatch(score[0]>score[1]?0:1);
@@ -1179,7 +1189,9 @@ function frame(now){
   if(!paused){                            // everything frozen while paused
     // goal celebration timer runs in REAL time so slow-mo lasts a fixed duration
     if(goalMs>0){ goalMs-=dt; if(goalMs<=0){ timeScale=1; msg.style.opacity=0; if(pendingWin!=null){ endMatch(pendingWin); pendingWin=null; } else if(pendingTimeUp){ pendingTimeUp=false; onTimeUp(); } else kickoff(); } }
-    if(started && countdownMs>0){ const prev=countdownMs; countdownMs-=dt; if(prev>0 && countdownMs<=0) goMs=450; }
+    if(started && countdownMs>0){ const prev=countdownMs; countdownMs-=dt;
+      if(Math.ceil(countdownMs/800)!==Math.ceil(prev/800) && countdownMs>0) sndCount();   // beep on each 3-2-1 tick
+      if(prev>0 && countdownMs<=0){ goMs=450; sndGo(); } }                                  // and the GO!
     if(goMs>0) goMs-=dt;
     _acc += dt*timeScale;                  // timeScale<1 -> fewer sim steps/sec -> slow motion
     if(_acc>250) _acc=250;                 // clamp big gaps (tab was backgrounded)
