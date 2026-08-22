@@ -26,7 +26,7 @@
   }
   .keys { font-size: 12px; color: #4a3d28; text-align:center; }
   .keys span { color: #1c140a; font-weight: 700; }
-  #msg { position: fixed; font-size: 42px; font-weight: 700; text-shadow: 0 4px 20px #000; pointer-events:none; opacity:0; transition:opacity .2s; }
+  #msg { position: fixed; font-family: 'Jaro', ui-monospace, monospace; font-size: 54px; letter-spacing: 1px; text-shadow: 0 4px 20px #000; pointer-events:none; opacity:0; transition:opacity .2s; }
 </style>
 
 <div id="hud">
@@ -38,7 +38,7 @@
 <div class="keys">
   HOME <span>WASD</span> boost <span>L-Shift</span> &nbsp;·&nbsp; AWAY(2p) <span>↑←↓→</span> boost <span>R-Shift</span><br>
   GAMEPAD <span>L-Stick</span> move <span>A</span> boost &nbsp;·&nbsp; 3–4 players require gamepads<br>
-  <span>ESC</span> pause &nbsp; <span>C</span> colors &nbsp; <span>M</span> mute
+  <span>ESC</span> pause &nbsp; <span>C</span> colors &nbsp; <span>M</span> mute music
 </div>
 <div id="msg"></div>
 
@@ -73,9 +73,9 @@ let noisePattern=null;
 // soft green mottle tile: painterly light/dark patches over the base green (cheap, repeats)
 const mottleTile = document.createElement('canvas'); mottleTile.width=mottleTile.height=300;
 (()=>{ const mc=mottleTile.getContext('2d');
-  const blobs=['rgba(120,200,110,.16)','rgba(90,170,80,.14)','rgba(20,80,40,.14)','rgba(200,240,150,.10)'];
-  for(let i=0;i<90;i++){
-    const x=Math.random()*300, y=Math.random()*300, r=18+Math.random()*46;
+  const blobs=['rgba(120,190,110,.06)','rgba(70,140,80,.06)','rgba(150,205,120,.05)'];   // gentle uneven tint, no hard patches
+  for(let i=0;i<55;i++){
+    const x=Math.random()*300, y=Math.random()*300, r=34+Math.random()*70;
     const g=mc.createRadialGradient(x,y,0,x,y,r);
     const col=blobs[(Math.random()*blobs.length)|0];
     g.addColorStop(0,col); g.addColorStop(1,'rgba(0,0,0,0)');
@@ -90,7 +90,7 @@ const wctx=wear.getContext('2d');
 // static scattered decor for texture: grass tufts + a few flowers (no rocks)
 const tufts=[], flowers=[];
 (()=>{
-  for(let i=0;i<170;i++) tufts.push({x:16+Math.random()*(900-32), y:8+Math.random()*(560-16), light:Math.random()<0.5, s:0.7+Math.random()*0.7});
+  for(let i=0;i<90;i++) tufts.push({x:16+Math.random()*(900-32), y:8+Math.random()*(560-16), light:Math.random()<0.5, s:0.7+Math.random()*0.7});
   const petals=['#ff6fae','#ffe14d','#ffffff','#c58cff','#ff8c2b'];
   for(let i=0;i<6;i++) flowers.push({x:30+Math.random()*(900-60), y:30+Math.random()*(560-60), c:petals[(Math.random()*petals.length)|0], s:0.75+Math.random()*0.6});
 })();
@@ -122,7 +122,8 @@ const goalMidY = H/2;
 
 // ---- config ----
 let teamSize = 1, numHumans = 1, humanSplit = false;   // team size, human count, and (2v2/2H) same-team vs opposing
-let muted = false;
+let muted = false;      // SFX/crowd gate (kept for the beep/crowd guards; no longer toggled by M)
+let musicOff = false;   // M toggles only the music bed
 let started = false;   // title screen until a real gesture (also unlocks audio)
 let paused = false;
 let menuFocus = 0, menuActive = false, gpPrev = {};   // gamepad menu navigation
@@ -164,7 +165,7 @@ addEventListener('keydown', e => {
   if (matchOver && (k===' '||k==='enter')) { startMatch(); ensureAudio(); return; }
   if (k === 'escape' || k === 'p') { if(started && !matchOver) togglePause(); }
   if (k === 'c') { palIdx=(palIdx+1)%PALETTES.length; applyPalette(); flashMsg('Colors: '+PALETTES[palIdx].name); }
-  if (k === 'm') { muted = !muted; crowdMuted(muted); musicMuted(muted); }
+  if (k === 'm') { musicOff = !musicOff; musicMuted(musicOff); }   // mute music only (crowd + SFX stay)
   if (k === 'x') PIXEL = !PIXEL;   // toggle pixelation (dev)
   ensureAudio();
 });
@@ -327,7 +328,7 @@ function mDrive(k){ const n=256,c=new Float32Array(n); for(let i=0;i<n;i++){ con
 function startMusic(){
   if(!ac || music.on) return;
   music.master=ac.createGain(); music.master.gain.value=musicVol;
-  music.mute=ac.createGain(); music.mute.gain.value=muted?0:1;
+  music.mute=ac.createGain(); music.mute.gain.value=musicOff?0:1;
   music.master.connect(music.mute); music.mute.connect(ac.destination);
   music.drumBus=ac.createGain(); music.drumBus.gain.value=1; music.drumBus.connect(music.master);
   music.bassBus=ac.createGain(); music.bassBus.gain.value=0.85;
@@ -539,8 +540,19 @@ function applyMove(p, ax, ay){
   const sp=Math.hypot(p.vx,p.vy);
   if(sp>cap){ p.vx=p.vx/sp*cap; p.vy=p.vy/sp*cap; }
   p.x+=p.vx; p.y+=p.vy;
-  p.x=Math.max(GD+p.r,Math.min(W-GD-p.r,p.x));   // stop at the field wall; only ball enters the goal pocket
+  // walls: the pitch rect, but the goal mouths open into the pockets within the goal band
+  const gband = p.y>goalY0+p.r && p.y<goalY1-p.r;
+  const minX = gband ? p.r : GD+p.r, maxX = gband ? W-p.r : W-GD-p.r;
+  p.x=Math.max(minX,Math.min(maxX,p.x));
   p.y=Math.max(p.r,Math.min(H-p.r,p.y));
+  // once inside a pocket, stay within the goal band so we don't clip through its side walls
+  if(p.x<GD+p.r || p.x>W-GD-p.r) p.y=Math.max(goalY0+p.r,Math.min(goalY1-p.r,p.y));
+  // goal posts are solid: shove the player out and kill inward velocity
+  for(const pt of posts){
+    const dx=p.x-pt.x, dy=p.y-pt.y, dist=Math.hypot(dx,dy)||1, min=PR+p.r;
+    if(dist<min){ const nx=dx/dist, ny=dy/dist; p.x=pt.x+nx*min; p.y=pt.y+ny*min;
+      const vd=p.vx*nx+p.vy*ny; if(vd<0){ p.vx-=vd*nx; p.vy-=vd*ny; } }
+  }
   // keep players out of the rounded corners too (slide along the arc)
   for(const [cx,cy,sx,sy] of [[GD+CR,CR,-1,-1],[W-GD-CR,CR,1,-1],[GD+CR,H-CR,-1,1],[W-GD-CR,H-CR,1,1]]){
     if((sx<0?p.x<cx:p.x>cx) && (sy<0?p.y<cy:p.y>cy)){
@@ -921,7 +933,7 @@ function draw(){
   ctx.fillStyle=teamCol('blue'); ctx.fillRect(0,goalY0,GD,GOAL_H);
   ctx.fillStyle=teamCol('red');  ctx.fillRect(W-GD,goalY0,GD,GOAL_H);
   ctx.globalAlpha=1;
-  drawNet(0, GD, GD); drawNet(W-GD, W, W-GD);   // anchor verticals at each goal's field-facing edge
+  // net is drawn later (after players) so players inside the pocket sit behind the mesh
   // rounded corners: cut the corner with the same darker green (no wall line)
   const CORN=[[GD,0,GD+CR,CR,Math.PI,1.5*Math.PI],[W-GD,0,W-GD-CR,CR,1.5*Math.PI,2*Math.PI],[GD,H,GD+CR,H-CR,0.5*Math.PI,Math.PI],[W-GD,H,W-GD-CR,H-CR,0,0.5*Math.PI]];
   ctx.fillStyle='#181f23';
@@ -955,6 +967,7 @@ function draw(){
     ctx.beginPath(); ctx.arc(p.x,p.y,rr,-Math.PI/2, -Math.PI/2 + frac*Math.PI*2); ctx.stroke();
     ctx.lineCap='butt';
   }
+  drawNet(0, GD, GD); drawNet(W-GD, W, W-GD);   // net mesh over players in the pocket (players appear behind the netting)
 
   // ground shadow: the ball's own ellipse, rotated to match, flattened onto the ground
   const shA=Math.max(0.06, 0.32 - ball.z*0.002), shS=Math.max(0.55, 1 - ball.z*0.004);
