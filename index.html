@@ -842,9 +842,9 @@ function drawTufts(){
     ctx.lineWidth = 2.2*g.s;
     const x=g.x, y=g.y, h=6*g.s;
     ctx.beginPath();
-    ctx.moveTo(x-3*g.s, y); ctx.lineTo(x-1.5*g.s, y-h);
-    ctx.moveTo(x,       y); ctx.lineTo(x,          y-h*1.25);
-    ctx.moveTo(x+3*g.s, y); ctx.lineTo(x+1.5*g.s, y-h);
+    ctx.moveTo(x-3*g.s, y); ctx.lineTo(x-1.5*g.s, y+h);
+    ctx.moveTo(x,       y); ctx.lineTo(x,          y+h*1.25);
+    ctx.moveTo(x+3*g.s, y); ctx.lineTo(x+1.5*g.s, y+h);
     ctx.stroke();
   }
   ctx.lineCap='butt';
