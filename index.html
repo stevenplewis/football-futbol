@@ -540,13 +540,19 @@ function applyMove(p, ax, ay){
   const sp=Math.hypot(p.vx,p.vy);
   if(sp>cap){ p.vx=p.vx/sp*cap; p.vy=p.vy/sp*cap; }
   p.x+=p.vx; p.y+=p.vy;
-  // walls: the pitch rect, but the goal mouths open into the pockets within the goal band
-  const gband = p.y>goalY0+p.r && p.y<goalY1-p.r;
-  const minX = gband ? p.r : GD+p.r, maxX = gband ? W-p.r : W-GD-p.r;
-  p.x=Math.max(minX,Math.min(maxX,p.x));
+  // board bounds first (back walls of the pockets sit at x=0 / x=W)
+  p.x=Math.max(p.r,Math.min(W-p.r,p.x));
   p.y=Math.max(p.r,Math.min(H-p.r,p.y));
-  // once inside a pocket, stay within the goal band so we don't clip through its side walls
-  if(p.x<GD+p.r || p.x>W-GD-p.r) p.y=Math.max(goalY0+p.r,Math.min(goalY1-p.r,p.y));
+  // goal pockets: the mouth opens only within the goal band; top/bottom are solid side walls.
+  // decide by x (are we in the pocket depth?) so stepping past the band clamps y instead of warping x out.
+  if(p.x-p.r < GD){                                        // overlapping the left pocket
+    if(p.y>goalY0 && p.y<goalY1) p.y=Math.max(goalY0+p.r,Math.min(goalY1-p.r,p.y));   // solid side walls
+    else p.x=Math.max(GD+p.r,p.x);                         // off the mouth -> solid goal-line wall
+  }
+  if(p.x+p.r > W-GD){                                       // right pocket (mirror)
+    if(p.y>goalY0 && p.y<goalY1) p.y=Math.max(goalY0+p.r,Math.min(goalY1-p.r,p.y));
+    else p.x=Math.min(W-GD-p.r,p.x);
+  }
   // goal posts are solid: shove the player out and kill inward velocity
   for(const pt of posts){
     const dx=p.x-pt.x, dy=p.y-pt.y, dist=Math.hypot(dx,dy)||1, min=PR+p.r;
