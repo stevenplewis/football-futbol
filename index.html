@@ -217,7 +217,7 @@ function flashMode(){ flashMsg(modeName()); }
 
 // ---- audio ----
 let ac = null;
-const crowdVol = 0.66, musicVol = 1.65;   // baked mix balance (crowd vs music)
+const crowdVol = 0.594, musicVol = 1.65;   // baked mix balance (crowd vs music)
 function ensureAudio(){ if(!ac){ try{ ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(ac&&ac.state==='suspended') ac.resume(); startCrowd(); startMusic(); }
 function beep(freq,dur,type='sine',vol=0.2,slideTo=null,when=0){
   if(!ac||muted) return;
@@ -264,8 +264,24 @@ function sndGoal(who){
 // tuned preset: a quiet murmur that swells into a roar on each goal.
 // chain: brown-noise loop -> bandpass -> gain(+LFO swell) -> mute -> out
 const CROWD      = { bp:1000, q:2.5, gain:0.05, lfoRate:0.05, lfoDepth:0.01, rumble:0.2 };
-const CROWD_ROAR = { gain:0.35, bp:1110, attack:0.4, hold:1.5, release:1.8 };
-let crowd = null;   // { gain, bp, mute } once the bed is running
+const CROWD_ROAR = { gain:0.35, bp:1110, attack:0.4, hold:1.75, release:2 };
+// crowd "wander": slow randomized drift on volume + filter Q so the ambient bed isn't dead steady.
+// rides its own gain node (independent of the roar, which drives gain + bp.frequency). Dev-tunable.
+const WANDER = { volDepth:0.05, qDepth:1, rate:3, jitter:0.8 };
+let crowdRoarEndsAt = 0, wanderTimer = null;
+function scheduleWander(){
+  if(!ac || !crowd) return;
+  const now = ac.currentTime;
+  const cool = now < crowdRoarEndsAt ? 0.25 : 1;                 // ease the wander off while roaring
+  const vt = 1 + (Math.random()*2-1)*WANDER.volDepth*cool;       // volume drift around 1.0
+  const qt = Math.max(0.3, CROWD.q + (Math.random()*2-1)*WANDER.qDepth*cool);
+  const glide = Math.max(0.2, WANDER.rate*0.45);                 // smooth glide toward each new target
+  crowd.wander.gain.setTargetAtTime(vt, now, glide);
+  crowd.bp.Q.setTargetAtTime(qt, now, glide);
+  const dt = WANDER.rate*(1 + (Math.random()*2-1)*WANDER.jitter);  // randomized interval to next target
+  wanderTimer = setTimeout(scheduleWander, Math.max(300, dt*1000));
+}
+let crowd = null;   // { gain, bp, mute, vol, wander } once the bed is running
 function startCrowd(){
   if(!ac || crowd) return;
   const len=2*ac.sampleRate, buf=ac.createBuffer(1,len,ac.sampleRate), d=buf.getChannelData(0);
@@ -277,11 +293,13 @@ function startCrowd(){
   const lfo=ac.createOscillator(), lfoGain=ac.createGain();   // slow swell rides the base gain
   lfo.frequency.value=CROWD.lfoRate; lfoGain.gain.value=CROWD.lfoDepth;
   lfo.connect(lfoGain); lfoGain.connect(gain.gain);
+  const wander=ac.createGain(); wander.gain.value=1;       // randomized ambient drift (see scheduleWander)
   const vol=ac.createGain(); vol.gain.value=0;             // live-play gate: 0 in menu/pause, crowdVol during a match
   const mute=ac.createGain(); mute.gain.value=muted?0:1;   // follows the M toggle
-  src.connect(bp); bp.connect(gain); gain.connect(vol); vol.connect(mute); mute.connect(ac.destination);
+  src.connect(bp); bp.connect(gain); gain.connect(wander); wander.connect(vol); vol.connect(mute); mute.connect(ac.destination);
   lfo.start(); src.start();
-  crowd={ gain, bp, mute, vol };
+  crowd={ gain, bp, mute, vol, wander };
+  scheduleWander();
 }
 // crowd is only present during live play; fade it out on the menu, pause, and win screens
 let crowdOn=false;
@@ -297,6 +315,7 @@ function crowdMuted(m){ if(crowd) crowd.mute.gain.setTargetAtTime(m?0:1, ac.curr
 function crowdRoar(scale=1){
   if(!crowd) return;
   const now=ac.currentTime, g=crowd.gain.gain, f=crowd.bp.frequency;
+  crowdRoarEndsAt = now + CROWD_ROAR.attack + CROWD_ROAR.hold + CROWD_ROAR.release;   // wander eases off until then
   const peakG=CROWD.gain+(CROWD_ROAR.gain-CROWD.gain)*scale;
   const peakF=CROWD.bp  +(CROWD_ROAR.bp  -CROWD.bp )*scale;
   g.cancelScheduledValues(now); f.cancelScheduledValues(now);
